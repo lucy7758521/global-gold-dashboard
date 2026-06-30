@@ -569,6 +569,97 @@ body {
   function timeStr(ms){ var d=new Date(ms); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0'); }
   function hhmm(ms){ var d=new Date(ms); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 
+  // ====== Fetch spot price and rebase seed data ======
+  function fetchSpotPriceAndSeed(){
+    fetch('https://api.gold-api.com/price/XAU')
+      .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+      .then(function(data){
+        if (!data || typeof data.price !== 'number' || data.price <= 0){
+          throw new Error('Invalid spot price');
+        }
+        var spotPrice = data.price;
+
+        // Compute offset: spot - comex (so we can rebase COMEX candles to spot price base)
+        var spotOffset = spotPrice - comexPrice;
+        console.log('Spot offset: '+spotOffset.toFixed(2)+' (spot='+spotPrice+' comex='+comexPrice+')');
+
+        // Rebase gcCandles to spot price AND shift timestamps so "now" aligns with the latest candle
+        var now = Date.now();
+        var lastCandleTime = 0;
+        if (gcCandles.length > 0){
+          lastCandleTime = parseTime(gcCandles[gcCandles.length - 1].t).getTime();
+        }
+        var timeShift = lastCandleTime > 0 ? (now - lastCandleTime) : 0;
+        console.log('Time shift: '+(timeShift/1000).toFixed(0)+'s (last candle: '+timeStr(lastCandleTime)+')');
+
+        for (var i = 0; i < gcCandles.length; i++){
+          var c = gcCandles[i];
+          var rebasedPrice = c.c + spotOffset;
+          var shiftedTime = parseTime(c.t).getTime() + timeShift;
+          livePriceHistory.push({ t: shiftedTime, p: rebasedPrice });
+        }
+
+        // Trim to last 12 hours
+        var cutoff12h = now - 12 * 60 * 60 * 1000;
+        livePriceHistory = livePriceHistory.filter(function(p){ return p.t >= cutoff12h; });
+
+        // Add the live spot price as the latest point
+        livePriceHistory.push({ t: now, p: spotPrice });
+
+        currentPrice = spotPrice;
+        prevPrice = spotPrice;
+        pollCount = 1;
+
+        console.log('Seeded '+livePriceHistory.length+' live price points, base='+spotPrice);
+
+        // Now render live charts & timeframes with rebased data
+        updateTimeframes();
+        updateLiveChart();
+        updateMultiMarket();
+        updateRatio();
+
+        document.getElementById('priceUpdateCount').textContent = pollCount;
+        document.getElementById('liveBadge').innerHTML = '<span class="live-dot"></span> 实时';
+        document.getElementById('dataTime').textContent = '更新 '+timeStr(now);
+        document.getElementById('lastUpdate').textContent = '最后更新: '+timeStr(now)+' (第'+pollCount+'次)';
+        document.getElementById('dataNote').textContent = '现货金种子数据已基准化 · 开始实时轮询';
+
+        // Start regular polling
+        setInterval(pollPrice, POLL_INTERVAL);
+
+        // Start news fetching
+        setTimeout(function(){
+          fetchRSSNews();
+          setInterval(fetchRSSNews, NEWS_INTERVAL);
+          setInterval(updateNewsCountdown, 1000);
+        }, 2000);
+      })
+      .catch(function(err){
+        console.error('Failed to fetch spot price:', err.message);
+        document.getElementById('lastUpdate').textContent = '现货价获取失败，使用COMEX数据继续轮询...';
+
+        // Fallback: use COMEX data directly with time shift
+        var now = Date.now();
+        var lastT = gcCandles.length > 0 ? parseTime(gcCandles[gcCandles.length-1].t).getTime() : 0;
+        var tShift = lastT > 0 ? (now - lastT) : 0;
+        for (var i = 0; i < gcCandles.length; i++){
+          var c = gcCandles[i];
+          livePriceHistory.push({ t: parseTime(c.t).getTime() + tShift, p: c.c });
+        }
+        currentPrice = comexPrice;
+        prevPrice = currentPrice;
+        updateTimeframes();
+        updateLiveChart();
+        updateMultiMarket();
+        updateRatio();
+        setInterval(pollPrice, POLL_INTERVAL);
+        setTimeout(function(){
+          fetchRSSNews();
+          setInterval(fetchRSSNews, NEWS_INTERVAL);
+        }, 2000);
+      });
+  }
+
   // ====== Load Dashboard Data ======
   function loadData(){
     return fetch('dashboard_data.json')
@@ -609,38 +700,17 @@ body {
         var cny = data.cny || {};
         cnyRate = cny.price || 6.77;
 
-        // Seed live history from gcCandles
-        for (var i = 0; i < gcCandles.length; i++){
-          var c = gcCandles[i];
-          livePriceHistory.push({ t: parseTime(c.t).getTime(), p: c.c });
-        }
-
-        // Initial current price = COMEX latest
-        currentPrice = comexPrice;
-        prevPrice = currentPrice;
-
         console.log('Data loaded: '+gcCandles.length+' gold candles, '+dailyData.length+' daily bars');
         console.log('COMEX: '+comexPrice+' O:'+comexOpen+' H:'+comexHigh+' L:'+comexLow+' Prev:'+comexPrevClose);
 
-        // Apply all data to UI
+        // Show static displays immediately (COMEX data, metals, etc.)
         updateAllDisplays();
         initAllCharts();
-        updateTimeframes();
-        updateLiveChart();
 
-        // Start real-time price polling
-        document.getElementById('lastUpdate').textContent = '数据就绪，开始实时轮询...';
-        setTimeout(function(){
-          pollPrice();
-          setInterval(pollPrice, POLL_INTERVAL);
-        }, 1000);
+        document.getElementById('lastUpdate').textContent = '获取实时现货金价...';
 
-        // Start news fetching (and countdown)
-        setTimeout(function(){
-          fetchRSSNews();
-          setInterval(fetchRSSNews, NEWS_INTERVAL);
-          setInterval(updateNewsCountdown, 1000);
-        }, 2000);
+        // Fetch spot price FIRST, then rebase seed data to spot price base
+        fetchSpotPriceAndSeed();
       })
       .catch(function(err){
         console.error('Failed to load dashboard_data.json:', err);
