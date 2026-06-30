@@ -830,9 +830,15 @@ body {
           break;
         }
       }
-      // If no match found (too little history), use earliest point
+      // If no match found (too little history / stale seed), use last available point before relative cutoff
       if (refIdx < 0 && livePriceHistory.length > 0){
-        refIdx = 0;
+        // Fallback: use seed's latest timestamp - window as cutoff
+        var seedLatest = livePriceHistory[livePriceHistory.length - 1].t;
+        var seedCutoff = seedLatest - win.ms;
+        for (var j = livePriceHistory.length - 1; j >= 0; j--){
+          if (livePriceHistory[j].t <= seedCutoff){ refIdx = j; break; }
+        }
+        if (refIdx < 0) refIdx = 0;
       }
 
       var priceEl = document.getElementById(win.id+'Price');
@@ -906,7 +912,8 @@ body {
   function updateLiveChart(){
     if (!liveChart) { initLiveChart(); }
 
-    // Use last 60-90 minutes of live data
+    // Strategy: use last 90 minutes of data (time-based).
+    // BUT: if seed data is stale (hours old), fall back to showing the last N candles.
     var now = Date.now();
     var cutoff = now - 90 * 60 * 1000;
     var times = [], prices = [];
@@ -915,6 +922,16 @@ body {
       if (livePriceHistory[i].t >= cutoff){
         times.push(hhmm(livePriceHistory[i].t));
         prices.push(livePriceHistory[i].p);
+      }
+    }
+
+    // Fallback: if time-based filter yields too few points, show last 90 candles
+    if (times.length < 10 && livePriceHistory.length > 0){
+      times = []; prices = [];
+      var start = Math.max(0, livePriceHistory.length - 90);
+      for (var j = start; j < livePriceHistory.length; j++){
+        times.push(hhmm(livePriceHistory[j].t));
+        prices.push(livePriceHistory[j].p);
       }
     }
 
