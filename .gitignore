@@ -1,0 +1,17 @@
+# WorkBuddy project data
+.workbuddy/
+
+# Local dev server
+server.js
+
+# Raw intermediate data files (consolidated into dashboard_data.json)
+gold_1m.json
+silver_1m.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
