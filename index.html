@@ -367,7 +367,7 @@ body {
       <div class="metal-header">
         <div style="display:flex;align-items:center;gap:12px;">
           <div class="metal-icon" style="background:rgba(255,215,0,0.1);color:var(--gold);">&#x1F947;</div>
-          <div><div class="metal-name">黄金</div><div class="metal-code">COMEX GC=F · USD/oz</div></div>
+          <div><div class="metal-name">黄金</div><div class="metal-code">gold-api XAU/USD 现货</div></div>
         </div>
       </div>
       <div class="metal-price" id="mGold">--</div>
@@ -381,7 +381,7 @@ body {
       <div class="metal-header">
         <div style="display:flex;align-items:center;gap:12px;">
           <div class="metal-icon" style="background:rgba(192,192,192,0.1);color:#c0c0c0;">&#x1F948;</div>
-          <div><div class="metal-name">白银</div><div class="metal-code">COMEX SI=F · USD/oz</div></div>
+          <div><div class="metal-name">白银</div><div class="metal-code">gold-api XAG/USD 现货</div></div>
         </div>
       </div>
       <div class="metal-price" id="mSilver">--</div>
@@ -395,7 +395,7 @@ body {
       <div class="metal-header">
         <div style="display:flex;align-items:center;gap:12px;">
           <div class="metal-icon" style="background:rgba(233,216,191,0.1);color:#e5d4c1;">&#x26AA;</div>
-          <div><div class="metal-name">铂金</div><div class="metal-code">NYMEX PL=F · USD/oz</div></div>
+          <div><div class="metal-name">铂金</div><div class="metal-code">gold-api XPT/USD 现货</div></div>
         </div>
       </div>
       <div class="metal-price" id="mPlatinum">--</div>
@@ -409,7 +409,7 @@ body {
       <div class="metal-header">
         <div style="display:flex;align-items:center;gap:12px;">
           <div class="metal-icon" style="background:rgba(150,150,180,0.1);color:#aab;">&#x26AB;</div>
-          <div><div class="metal-name">钯金</div><div class="metal-code">NYMEX PA=F · USD/oz</div></div>
+          <div><div class="metal-name">钯金</div><div class="metal-code">gold-api XPD/USD 现货</div></div>
         </div>
       </div>
       <div class="metal-price" id="mPalladium">--</div>
@@ -535,6 +535,12 @@ body {
   var silverPrice = 0;
   var platinumPrice = 0;
   var palladiumPrice = 0;
+  var prevSilverPrice = 0;
+  var prevPlatinumPrice = 0;
+  var prevPalladiumPrice = 0;
+  var silverPrevClose = 58.17;
+  var platinumPrevClose = 1574.5;
+  var palladiumPrevClose = 1210.4;
   var dxyPrice = 0;
   var cnyRate = 6.77;
   var currentPrice = 0;    // live spot price (gold-api.com)
@@ -569,19 +575,37 @@ body {
   function timeStr(ms){ var d=new Date(ms); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0'); }
   function hhmm(ms){ var d=new Date(ms); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 
-  // ====== Fetch spot price and rebase seed data ======
-  function fetchSpotPriceAndSeed(){
-    fetch('https://api.gold-api.com/price/XAU')
+  // ====== Fetch spot price for any metal symbol ======
+  function fetchSpot(symbol){
+    return fetch('https://api.gold-api.com/price/'+symbol)
       .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
       .then(function(data){
         if (!data || typeof data.price !== 'number' || data.price <= 0){
-          throw new Error('Invalid spot price');
+          throw new Error('Invalid price for '+symbol);
         }
-        var spotPrice = data.price;
+        return data.price;
+      });
+  }
+
+  // ====== Fetch spot price and rebase seed data ======
+  function fetchSpotPriceAndSeed(){
+    document.getElementById('lastUpdate').textContent = '获取实时现货金价...';
+
+    Promise.all([
+      fetchSpot('XAU'),
+      fetchSpot('XAG'),
+      fetchSpot('XPT'),
+      fetchSpot('XPD')
+    ])
+      .then(function(prices){
+        var spotGold = prices[0];
+        var spotSilver = prices[1];
+        var spotPlatinum = prices[2];
+        var spotPalladium = prices[3];
 
         // Compute offset: spot - comex (so we can rebase COMEX candles to spot price base)
-        var spotOffset = spotPrice - comexPrice;
-        console.log('Spot offset: '+spotOffset.toFixed(2)+' (spot='+spotPrice+' comex='+comexPrice+')');
+        var spotOffset = spotGold - comexPrice;
+        console.log('Spot offset: '+spotOffset.toFixed(2)+' (spot='+spotGold+' comex='+comexPrice+')');
 
         // Rebase gcCandles to spot price AND shift timestamps so "now" aligns with the latest candle
         var now = Date.now();
@@ -604,25 +628,32 @@ body {
         livePriceHistory = livePriceHistory.filter(function(p){ return p.t >= cutoff12h; });
 
         // Add the live spot price as the latest point
-        livePriceHistory.push({ t: now, p: spotPrice });
+        livePriceHistory.push({ t: now, p: spotGold });
 
-        currentPrice = spotPrice;
-        prevPrice = spotPrice;
+        // Set current and previous prices
+        currentPrice = spotGold;
+        prevPrice = spotGold;
+        silverPrice = spotSilver;
+        prevSilverPrice = spotSilver;
+        platinumPrice = spotPlatinum;
+        prevPlatinumPrice = spotPlatinum;
+        palladiumPrice = spotPalladium;
+        prevPalladiumPrice = spotPalladium;
         pollCount = 1;
 
-        console.log('Seeded '+livePriceHistory.length+' live price points, base='+spotPrice);
+        console.log('Seeded '+livePriceHistory.length+' live price points');
+        console.log('Spot prices: Gold='+spotGold+' Silver='+spotSilver+' Platinum='+spotPlatinum+' Palladium='+spotPalladium);
 
-        // Now render live charts & timeframes with rebased data
+        // Now render all displays with live spot data
+        updateAllDisplays();
         updateTimeframes();
         updateLiveChart();
-        updateMultiMarket();
-        updateRatio();
+        updateMetalsChart();
 
         document.getElementById('priceUpdateCount').textContent = pollCount;
         document.getElementById('liveBadge').innerHTML = '<span class="live-dot"></span> 实时';
         document.getElementById('dataTime').textContent = '更新 '+timeStr(now);
         document.getElementById('lastUpdate').textContent = '最后更新: '+timeStr(now)+' (第'+pollCount+'次)';
-        document.getElementById('dataNote').textContent = '现货金种子数据已基准化 · 开始实时轮询';
 
         // Start regular polling
         setInterval(pollPrice, POLL_INTERVAL);
@@ -635,7 +666,7 @@ body {
         }, 2000);
       })
       .catch(function(err){
-        console.error('Failed to fetch spot price:', err.message);
+        console.error('Failed to fetch spot prices:', err.message);
         document.getElementById('lastUpdate').textContent = '现货价获取失败，使用COMEX数据继续轮询...';
 
         // Fallback: use COMEX data directly with time shift
@@ -648,10 +679,16 @@ body {
         }
         currentPrice = comexPrice;
         prevPrice = currentPrice;
+        silverPrice = silverPrice || 59.19;
+        prevSilverPrice = silverPrice;
+        platinumPrice = platinumPrice || 1595.3;
+        prevPlatinumPrice = platinumPrice;
+        palladiumPrice = palladiumPrice || 1239.0;
+        prevPalladiumPrice = palladiumPrice;
+        updateAllDisplays();
         updateTimeframes();
         updateLiveChart();
-        updateMultiMarket();
-        updateRatio();
+        updateMetalsChart();
         setInterval(pollPrice, POLL_INTERVAL);
         setTimeout(function(){
           fetchRSSNews();
@@ -681,16 +718,19 @@ body {
 
         var s = data.silver || {};
         silverPrice = s.price || 59.19;
+        silverPrevClose = s.prev_close || 58.17;
         w52.silver_h = s.w52_high || 121.79;
         w52.silver_l = s.w52_low || 35.59;
 
         var pl = data.platinum || {};
         platinumPrice = pl.price || 1595.3;
+        platinumPrevClose = pl.prev_close || 1574.5;
         w52.platinum_h = pl.w52_high || 2925.0;
         w52.platinum_l = pl.w52_low || 1271.1;
 
         var pa = data.palladium || {};
         palladiumPrice = pa.price || 1239.0;
+        palladiumPrevClose = pa.prev_close || 1210.4;
         w52.palladium_h = pa.w52_high || 2195.5;
         w52.palladium_l = pa.w52_low || 1080.5;
 
@@ -741,9 +781,8 @@ body {
 
   function updateHeroCard(){
     // Use live spot price (currentPrice) for hero
-    // Change vs previous poll (prevPrice)
-    var change = currentPrice - prevPrice;
-    var comexChange = comexPrice > 0 ? currentPrice - comexPrice : 0;
+    var tickChange = currentPrice - prevPrice;
+    var dailyChange = comexPrevClose > 0 ? currentPrice - comexPrevClose : 0;
 
     var goldPriceEl = document.getElementById('goldPrice');
     var oldText = goldPriceEl.textContent;
@@ -751,19 +790,19 @@ body {
     goldPriceEl.textContent = newText;
 
     // Flash animation on price change
-    if (oldText !== '--' && change !== 0){
-      goldPriceEl.className = 'hero-price ' + (change >= 0 ? 'flash-up digit-updating' : 'flash-down digit-updating');
+    if (oldText !== '--' && tickChange !== 0){
+      goldPriceEl.className = 'hero-price ' + (tickChange >= 0 ? 'flash-up digit-updating' : 'flash-down digit-updating');
       setTimeout(function(){ goldPriceEl.className = 'hero-price'; }, 1500);
     }
 
-    // Change pill: vs previous poll
-    var changePct = prevPrice > 0 ? change / prevPrice * 100 : 0;
-    if (Math.abs(changePct) > 0.001){
-      document.getElementById('goldChangePill').innerHTML = arrowSymbol(change) + ' ' + fmtComma(Math.abs(change), 2) + ' (' + fmt(changePct, 3) + '%)';
-      document.getElementById('goldChangePill').className = 'change-pill ' + arrowClass(change);
+    // Change pill: vs previous close (daily change)
+    var changePct = comexPrevClose > 0 ? dailyChange / comexPrevClose * 100 : 0;
+    if (Math.abs(dailyChange) > 0.001){
+      document.getElementById('goldChangePill').innerHTML = arrowSymbol(dailyChange) + ' ' + fmtComma(Math.abs(dailyChange), 2) + ' (' + fmt(changePct, 3) + '%)';
+      document.getElementById('goldChangePill').className = 'change-pill ' + arrowClass(dailyChange);
     }
 
-    document.getElementById('yesterdaySettle').textContent = fmtComma(prevPrice, 2);
+    document.getElementById('yesterdaySettle').textContent = fmtComma(comexPrevClose, 2);
     document.getElementById('dayOpen').textContent = fmtComma(comexOpen, 2);
     document.getElementById('dayHigh').textContent = fmtComma(comexHigh, 2);
     document.getElementById('dayLow').textContent = fmtComma(comexLow, 2);
@@ -806,22 +845,19 @@ body {
   }
 
   function updateMetalCards(){
-    // Gold uses COMEX price for metal card
-    var goldChg = comexPrice - comexPrevClose;
-    updateMetalDisplay('mGold','mGoldChg','mGoldL52','mGoldH52','mGoldRBar', comexPrice, goldChg, comexPrevClose, w52.gold_l, w52.gold_h);
+    // All metals now use live spot prices from gold-api.com
+    // Change is vs previous close (futures close from JSON, used as daily baseline)
+    var goldChg = currentPrice - comexPrevClose;
+    updateMetalDisplay('mGold','mGoldChg','mGoldL52','mGoldH52','mGoldRBar', currentPrice, goldChg, comexPrevClose, w52.gold_l, w52.gold_h);
 
-    // Silver, Platinum, Palladium
-    var siPrevClose = 58.17;
-    var siChange = silverPrice - siPrevClose;
-    updateMetalDisplay('mSilver','mSilverChg','mSilverL52','mSilverH52','mSilverRBar', silverPrice, siChange, siPrevClose, w52.silver_l, w52.silver_h);
+    var silverChg = silverPrice - silverPrevClose;
+    updateMetalDisplay('mSilver','mSilverChg','mSilverL52','mSilverH52','mSilverRBar', silverPrice, silverChg, silverPrevClose, w52.silver_l, w52.silver_h);
 
-    var plPrev = 1588.8;
-    var plChg = platinumPrice - plPrev;
-    updateMetalDisplay('mPlatinum','mPlatinumChg','mPlatinumL52','mPlatinumH52','mPlatinumRBar', platinumPrice, plChg, plPrev, w52.platinum_l, w52.platinum_h);
+    var platinumChg = platinumPrice - platinumPrevClose;
+    updateMetalDisplay('mPlatinum','mPlatinumChg','mPlatinumL52','mPlatinumH52','mPlatinumRBar', platinumPrice, platinumChg, platinumPrevClose, w52.platinum_l, w52.platinum_h);
 
-    var paPrev = 1232.0;
-    var paChg = palladiumPrice - paPrev;
-    updateMetalDisplay('mPalladium','mPalladiumChg','mPalladiumL52','mPalladiumH52','mPalladiumRBar', palladiumPrice, paChg, paPrev, w52.palladium_l, w52.palladium_h);
+    var palladiumChg = palladiumPrice - palladiumPrevClose;
+    updateMetalDisplay('mPalladium','mPalladiumChg','mPalladiumL52','mPalladiumH52','mPalladiumRBar', palladiumPrice, palladiumChg, palladiumPrevClose, w52.palladium_l, w52.palladium_h);
   }
 
   function updateMetalDisplay(priceId, chgId, l52Id, h52Id, rbarId, price, change, prev, wl, wh){
@@ -1109,6 +1145,22 @@ body {
     });
   }
 
+  // ====== Update Metals Compare Chart ======
+  var trendChart = null;
+  function updateMetalsChart(){
+    if (!metalsChart) return;
+    var goldChgPct = comexPrevClose > 0 ? (currentPrice - comexPrevClose) / comexPrevClose * 100 : 0;
+    var silverChgPct = silverPrevClose > 0 ? (silverPrice - silverPrevClose) / silverPrevClose * 100 : 0;
+    var platinumChgPct = platinumPrevClose > 0 ? (platinumPrice - platinumPrevClose) / platinumPrevClose * 100 : 0;
+    var palladiumChgPct = palladiumPrevClose > 0 ? (palladiumPrice - palladiumPrevClose) / palladiumPrevClose * 100 : 0;
+    metalsChart.setOption({
+      series: [
+        { data: [currentPrice, silverPrice, platinumPrice, palladiumPrice] },
+        { data: [parseFloat(goldChgPct.toFixed(2)), parseFloat(silverChgPct.toFixed(2)), parseFloat(platinumChgPct.toFixed(2)), parseFloat(palladiumChgPct.toFixed(2))] }
+      ]
+    });
+  }
+
   // ====== 30-Day Trend Chart ======
   var trendChart = null;
   function initTrendChart(){
@@ -1184,37 +1236,53 @@ body {
     initRatioGauge();
   }
 
-  // ====== Poll Gold API for spot price ======
+  // ====== Poll Gold API for all metal spot prices ======
   function pollPrice(){
-    fetch('https://api.gold-api.com/price/XAU')
-      .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-      .then(function(data){
-        if (data && typeof data.price === 'number' && data.price > 0){
-          var newPrice = data.price;
-          if (newPrice === currentPrice) return; // no change
+    Promise.all([
+      fetchSpot('XAU'),
+      fetchSpot('XAG'),
+      fetchSpot('XPT'),
+      fetchSpot('XPD')
+    ])
+      .then(function(prices){
+        var newGold = prices[0];
+        var newSilver = prices[1];
+        var newPlatinum = prices[2];
+        var newPalladium = prices[3];
 
-          prevPrice = currentPrice;
-          currentPrice = newPrice;
-          pollCount++;
+        var anyChanged = newGold !== currentPrice || newSilver !== silverPrice ||
+                         newPlatinum !== platinumPrice || newPalladium !== palladiumPrice;
+        if (!anyChanged) return;
 
-          // Add to live history
-          var now = Date.now();
-          livePriceHistory.push({ t: now, p: currentPrice });
+        prevPrice = currentPrice;
+        prevSilverPrice = silverPrice;
+        prevPlatinumPrice = platinumPrice;
+        prevPalladiumPrice = palladiumPrice;
 
-          // Trim: keep last 12 hours
-          var cutoff = now - 12 * 60 * 60 * 1000;
-          livePriceHistory = livePriceHistory.filter(function(p){ return p.t >= cutoff; });
+        currentPrice = newGold;
+        silverPrice = newSilver;
+        platinumPrice = newPlatinum;
+        palladiumPrice = newPalladium;
+        pollCount++;
 
-          // Update ALL displays
-          updateAllDisplays();
-          updateTimeframes();
-          updateLiveChart();
+        // Add to live history
+        var now = Date.now();
+        livePriceHistory.push({ t: now, p: currentPrice });
 
-          document.getElementById('priceUpdateCount').textContent = pollCount;
-          document.getElementById('liveBadge').innerHTML = '<span class="live-dot"></span> 实时';
-          document.getElementById('dataTime').textContent = '更新 '+timeStr(now);
-          document.getElementById('lastUpdate').textContent = '最后更新: '+timeStr(now)+' (第'+pollCount+'次)';
-        }
+        // Trim: keep last 12 hours
+        var cutoff = now - 12 * 60 * 60 * 1000;
+        livePriceHistory = livePriceHistory.filter(function(p){ return p.t >= cutoff; });
+
+        // Update ALL displays
+        updateAllDisplays();
+        updateTimeframes();
+        updateLiveChart();
+        updateMetalsChart();
+
+        document.getElementById('priceUpdateCount').textContent = pollCount;
+        document.getElementById('liveBadge').innerHTML = '<span class="live-dot"></span> 实时';
+        document.getElementById('dataTime').textContent = '更新 '+timeStr(now);
+        document.getElementById('lastUpdate').textContent = '最后更新: '+timeStr(now)+' (第'+pollCount+'次)';
       })
       .catch(function(err){
         console.log('Gold API error:', err.message);
@@ -1325,21 +1393,23 @@ body {
     }
 
     Promise.all(promises).then(function(){
-      // Merge: embedded first, then new items (dedup)
+      // Merge: fetched news first (latest at top), then embedded as fallback, dedup
       var seen = {};
       var merged = [];
-      // Add embedded first
-      for (var i = 0; i < embeddedNews.length; i++){
-        var key = embeddedNews[i].title.substr(0, 30);
-        seen[key] = true;
-        merged.push(embeddedNews[i]);
-      }
-      // Add fetched, dedup
+      // Add fetched first, dedup
       for (var j = 0; j < allNews.length; j++){
         var k = allNews[j].title.substr(0, 30);
         if (!seen[k]){
           seen[k] = true;
           merged.push(allNews[j]);
+        }
+      }
+      // Add embedded, dedup
+      for (var i = 0; i < embeddedNews.length; i++){
+        var key = embeddedNews[i].title.substr(0, 30);
+        if (!seen[key]){
+          seen[key] = true;
+          merged.push(embeddedNews[i]);
         }
       }
 
